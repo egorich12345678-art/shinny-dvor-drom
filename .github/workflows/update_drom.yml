@@ -1,0 +1,87 @@
+name: Обновление прайса Дром
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 03:00 UTC = 10:00 Новосибирск
+    - cron: "0 3 * * *"
+    # 11:00 UTC = 18:00 Новосибирск
+    - cron: "0 11 * * *"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
+jobs:
+  update-and-publish:
+    runs-on: ubuntu-latest
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Получить файлы репозитория
+        uses: actions/checkout@v4
+
+      - name: Настроить Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Проверить ссылку 4tochki
+        env:
+          FOURTOCHKI_URL: ${{ secrets.FOURTOCHKI_URL }}
+        run: |
+          if [ -z "$FOURTOCHKI_URL" ]; then
+            echo "Не задан секрет FOURTOCHKI_URL"
+            exit 1
+          fi
+
+      - name: Сформировать прайс для Дрома
+        env:
+          FOURTOCHKI_URL: ${{ secrets.FOURTOCHKI_URL }}
+        run: |
+          mkdir -p public
+          python drom_4tochki_converter.py \
+            --output public/drom_tires.xml \
+            --min-rest 4 \
+            --set-size 4 \
+            --available false
+
+      - name: Создать страницу Шинный двор
+        run: |
+          cat > public/index.html <<'EOF'
+          <!doctype html>
+          <html lang="ru">
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width,initial-scale=1">
+            <title>Шинный двор — прайс Дром</title>
+          </head>
+          <body>
+            <h1>Шинный двор</h1>
+            <p>Автоматический прайс для Дрома.</p>
+            <p>Легковые, грузовые и шины для спецтехники.</p>
+            <p><a href="drom_tires.xml">Открыть прайс</a></p>
+          </body>
+          </html>
+          EOF
+          touch public/.nojekyll
+
+      - name: Настроить GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Подготовить файлы
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+      - name: Опубликовать прайс
+        id: deployment
+        uses: actions/deploy-pages@v4
