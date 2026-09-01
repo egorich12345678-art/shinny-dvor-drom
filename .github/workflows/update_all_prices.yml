@@ -1,0 +1,112 @@
+name: Обновление двух прайсов Дром
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * *"
+    - cron: "0 11 * * *"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
+jobs:
+  update-and-publish:
+    runs-on: ubuntu-latest
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Получить репозиторий
+        uses: actions/checkout@v4
+
+      - name: Настроить Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Проверить секреты
+        env:
+          FOURTOCHKI_URL: ${{ secrets.FOURTOCHKI_URL }}
+          SIBZAPASKA_USER: ${{ secrets.SIBZAPASKA_USER }}
+          SIBZAPASKA_PASSWORD: ${{ secrets.SIBZAPASKA_PASSWORD }}
+        run: |
+          test -n "$FOURTOCHKI_URL" || (echo "Нет FOURTOCHKI_URL" && exit 1)
+          test -n "$SIBZAPASKA_USER" || (echo "Нет SIBZAPASKA_USER" && exit 1)
+          test -n "$SIBZAPASKA_PASSWORD" || (echo "Нет SIBZAPASKA_PASSWORD" && exit 1)
+
+      - name: Сформировать прайс 4tochki
+        env:
+          FOURTOCHKI_URL: ${{ secrets.FOURTOCHKI_URL }}
+        run: |
+          mkdir -p public
+          python drom_4tochki_converter.py \
+            --output public/drom_tires.xml \
+            --min-rest 4 \
+            --set-size 4 \
+            --available false
+
+      - name: Сформировать прайс Запаска
+        env:
+          SIBZAPASKA_USER: ${{ secrets.SIBZAPASKA_USER }}
+          SIBZAPASKA_PASSWORD: ${{ secrets.SIBZAPASKA_PASSWORD }}
+        run: |
+          python sibzapaska_drom_converter.py public/drom_zapaska.xml
+
+      - name: Создать страницу Шинный двор
+        run: |
+          cat > public/index.html <<'EOF'
+          <!doctype html>
+          <html lang="ru">
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width,initial-scale=1">
+            <title>Шинный двор — прайсы Дром</title>
+          </head>
+          <body>
+            <h1>Шинный двор</h1>
+            <p><a href="drom_tires.xml">Прайс 4tochki</a></p>
+            <p><a href="drom_zapaska.xml">Прайс Запаска</a></p>
+          </body>
+          </html>
+          EOF
+          touch public/.nojekyll
+
+      - name: Проверить оба XML
+        run: |
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+
+          for f in [
+              "public/drom_tires.xml",
+              "public/drom_zapaska.xml"
+          ]:
+              root = ET.parse(f).getroot()
+              count = len(root.findall("offer"))
+
+              if count < 100:
+                  raise SystemExit(
+                      f"{f}: подозрительно мало товаров: {count}"
+                  )
+
+              print(f"{f}: {count} товаров")
+          PY
+
+      - name: Настроить GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Подготовить файлы Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+      - name: Опубликовать оба прайса
+        id: deployment
+        uses: actions/deploy-pages@v4
