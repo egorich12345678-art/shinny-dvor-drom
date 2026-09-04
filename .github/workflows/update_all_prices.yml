@@ -1,5 +1,4 @@
 name: Обновление общего прайса Дром
-
 on:
   workflow_dispatch:
   schedule:
